@@ -34,7 +34,7 @@ class LightningMod_DocEmbedder(L.LightningModule):
 
         self.loss = MarginilizedLoss()
 
-    def forward(self, x, batch_idx):
+    def forward(self, x):
         return self.lang_head(x)
 
     def training_step(self, ref_batches: List[Tensor], batch_idx):
