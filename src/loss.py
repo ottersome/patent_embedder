@@ -25,13 +25,15 @@ class MarginilizedLoss(nn.Module):
                 ref x batch_size x embedding_dim
         """
         # self.logger.debug(f"input x for loss is x: {x}")
-        intra_distance = torch.sum(
-            torch.stack([self._distance(x[0], neighbor) for neighbor in x]), dim=0
-        )
+        # intra_distance = torch.sum(
+        #    torch.stack([self._distance(x[0], neighbor) for neighbor in x[1:-1]]), dim=0
+        # )
+        intra_distance = self._distance(x[0], x[1])
         # self.logger.debug(f"intra_distance: {intra_distance}")
         inter_distance = self._distance(x[0], x[-1])
         # self.logger.debug(f"inter_distance: {inter_distance}")
-        difference = intra_distance - inter_distance + 1 * len(x[:-1])
+        # difference = intra_distance - inter_distance + 1 * len(x[:-1])
+        difference = intra_distance - inter_distance + 1
         # self.logger.debug(f"difference: {difference}")
         zeros_like = torch.zeros_like(difference)
         return torch.max(torch.stack([difference, zeros_like]), dim=0)[0]

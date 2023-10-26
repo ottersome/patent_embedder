@@ -27,15 +27,20 @@ class LightningMod_DocEmbedder(L.LightningModule):
         )
         if load_init_weights:  # Actually downloads the weights (from HF likely)
             self.mylogger.info("⏬Downloading Model")
-            self.lang_head = AutoModel.from_pretrained(lang_head_name)
+            # Create config so we can get hidden ouputs
+            config = AutoConfig.from_pretrained(
+                lang_head_name, output_hidden_states=True
+            )
+            self.lang_head = AutoModel.from_pretrained(lang_head_name, config=config)
         else:  # This model has the correct architecture but randomly initalized weights
+            self.mylogger.info("🛠️ Configuring Model Architecture")
             self.lang_head = AutoModel.from_config(self.lang_head_config)
         self.batch_size = 4
 
         self.loss = MarginilizedLoss()
 
-    def forward(self, x):
-        return self.lang_head(x)
+    def forward(self, x, attention_mask):
+        return self.lang_head(x, attention_mask=attention_mask)
 
     def training_step(self, ref_batches: List[Tensor], batch_idx):
         # Get embeddings
@@ -43,7 +48,13 @@ class LightningMod_DocEmbedder(L.LightningModule):
 
         contextualized_embeddings_batches = []
         for batch in ref_batches:
-            cont_embeddings = self.lang_head(batch).hidden_states[-1]
+            # Create attention mask online for the batch
+            attention_mask = torch.ones_like(batch)
+            attention_mask[batch == 0] = 0
+            cont_embeddings = self.lang_head(
+                batch, attention_mask=attention_mask
+            ).hidden_states[-1]
+            # cont_embeddings = self.lang_head(batch).hidden_states[-1]
             contextualized_embeddings_batches.append(cont_embeddings[:, 0, :])
 
         # Once We have embeddings we can compute the loss
@@ -65,12 +76,16 @@ class LightningMod_DocEmbedder(L.LightningModule):
         bar.set_descripion("Validation")
         return bar
 
-    def validation_step(self, ref_batches: List[Tensor], batch_idx):
+    def validation_step(self, ref_batches: List[Tensor]):
         # Get embeddings
         # self.mylogger.debug(f"ref_batches: {ref_batches}")
         cont_embeddings = []
         for batch in ref_batches:
-            docs_embeds = self.lang_head(batch).hidden_states[-1]
+            attention_mask = torch.ones_like(batch)
+            attention_mask[batch == 0] = 0
+            docs_embeds = self.lang_head(
+                batch, attention_mask=attention_mask
+            ).hidden_states[-1]
             cont_embeddings.append(docs_embeds[:, 0, :])
         # Once We have embeddings we can compute the loss
         loss = self.loss(cont_embeddings)

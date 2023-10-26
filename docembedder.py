@@ -70,41 +70,46 @@ class DocEmbedder:
 
     def doc_dist(self, doc1: DocRep, doc2: DocRep) -> torch.Tensor:
         self.model.eval()
+        tokns1 = (
+            torch.Tensor(
+                self.tokenizer.encode(
+                    doc1.data,
+                    max_length=self.ENCODER_MAX_LENGTH,
+                    truncation=True,
+                    padding="max_length",
+                )
+            )
+            .to(torch.long)
+            .view(1, -1)
+        )
+        attention_mask = torch.ones_like(tokns1)
+        attention_mask[tokns1 == 0] = 0
         embed1 = (
-            self.model(
-                torch.Tensor(
-                    self.tokenizer.encode(
-                        doc1.data,
-                        max_length=self.ENCODER_MAX_LENGTH,
-                        truncation=True,
-                        padding="max_length",
-                    )
-                )
-                .to(torch.long)
-                .view(1, -1)
-            )
+            self.model(tokns1, attention_mask=attention_mask)
             .hidden_states[-1][:, 0, :]
             .detach()
             .squeeze()
         )
+        tokns2 = (
+            torch.Tensor(
+                self.tokenizer.encode(
+                    doc2.data,
+                    max_length=self.ENCODER_MAX_LENGTH,
+                    truncation=True,
+                    padding="max_length",
+                )
+            )
+            .to(torch.long)
+            .view(1, -1)
+        )
+        attention_mask = torch.ones_like(tokns2)
+        attention_mask[tokns2 == 0] = 0
         embed2 = (
-            self.model(
-                torch.Tensor(
-                    self.tokenizer.encode(
-                        doc2.data,
-                        max_length=self.ENCODER_MAX_LENGTH,
-                        truncation=True,
-                        padding="max_length",
-                    )
-                )
-                .to(torch.long)
-                .view(1, -1)
-            )
+            self.model(tokns2, attention_mask=attention_mask)
             .hidden_states[-1][:, 0, :]
             .detach()
             .squeeze()
         )
-        # self.logger.info(f"embed1: {embed1}\n embed2: {embed2})")
 
         return torch.norm(
             embed1 - embed2,

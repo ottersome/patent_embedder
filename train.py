@@ -7,9 +7,9 @@ import torch.utils.data as data
 from lightning.pytorch.loggers import WandbLogger
 from transformers import AutoModelForMaskedLM, AutoTokenizer, BertConfig
 
-from .dataset import DatabaseFactory
-from .lightningMods import LightningMod_DocEmbedder
-from .utils.general import getargs, upload_checkpoint_to_gcs
+from src.dataset import DatabaseFactory
+from src.lightningMods import LightningMod_DocEmbedder
+from src.utils.general import getargs, upload_checkpoint_to_gcs
 
 args = getargs()
 
@@ -82,19 +82,19 @@ if Path("checkpoints/model.ckpt").exists():
     lightning_modules = LightningMod_DocEmbedder.load_from_checkpoint(
         "checkpoints/model.ckpt",
         lang_head_name=args.encoder_base,
-        load_init_weights=False,
+        load_init_weights=True,
     )
 else:
     lightning_modules = LightningMod_DocEmbedder(
         args.encoder_base, load_init_weights=True
     )
-logger.info("🤖Model Created")
+logger.info("🤖 Model Created")
 
 trainer = L.Trainer(
     logger=wandb_logger,
     accumulate_grad_batches=4,
     max_epochs=args.epochs,
-    val_check_interval=0.25,
+    # val_check_interval=0.5,
     enable_checkpointing=True,
 )
 # tuner = Tuner(trainer)

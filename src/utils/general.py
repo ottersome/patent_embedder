@@ -50,7 +50,7 @@ def getargs():
         default="gcs_service_key.json",
         help="Credentials for Google Cloud Storage",
     )
-    argparser.add_argument("--gcs_bucketname", default="llbi-models")
+    argparser.add_argument("--gcs_bucketname", default="llmbi-models")
     argparser.add_argument("--gcs_blobname", default="checkpoints/model.ckpt")
 
     # Arguments for psql
