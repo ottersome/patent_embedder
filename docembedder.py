@@ -3,7 +3,7 @@ import os
 
 import torch
 from google.cloud import storage
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizer
 
 from src.lightningMods import LightningMod_DocEmbedder
 from src.utils.general import setup_logger
@@ -22,7 +22,7 @@ class DocEmbedder:
     FOUNDATION_MODEL = "allenai/scibert_scivocab_uncased"
     ENCODER_MAX_LENGTH = 512
 
-    def __init__(self, blob_name: str):
+    def __init__(self, blob_name: str, tokenizer: PreTrainedTokenizer):
         self.logger = setup_logger("DocEmbWrapper", "main.log", logging.INFO)
         home_path = os.path.expanduser("~")
         target_dir = os.path.join(home_path, self.TARGET_PATH)
@@ -50,6 +50,7 @@ class DocEmbedder:
         self.model = LightningMod_DocEmbedder.load_from_checkpoint(
             target_file,
             lang_head_name=self.FOUNDATION_MODEL,
+            tokenizer=tokenizer,
             load_init_weights=False,
             strict=False,
         )
@@ -81,6 +82,7 @@ class DocEmbedder:
             )
             .to(torch.long)
             .view(1, -1)
+            .to("cuda")
         )
         attention_mask = torch.ones_like(tokns1)
         attention_mask[tokns1 == 0] = 0
@@ -101,8 +103,9 @@ class DocEmbedder:
             )
             .to(torch.long)
             .view(1, -1)
+            .to("cuda")
         )
-        attention_mask = torch.ones_like(tokns2)
+        attention_mask = torch.ones_like(tokns2).to("cuda")
         attention_mask[tokns2 == 0] = 0
         embed2 = (
             self.model(tokns2, attention_mask=attention_mask)

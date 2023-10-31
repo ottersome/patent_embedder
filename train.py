@@ -3,13 +3,17 @@ import os
 from pathlib import Path, PosixPath
 
 import lightning as L
+import torch
 import torch.utils.data as data
 from lightning.pytorch.loggers import WandbLogger
-from transformers import AutoModelForMaskedLM, AutoTokenizer, BertConfig
+from lightning.pytorch.tuner.tuning import Tuner
+from transformers import AutoTokenizer
 
-from src.dataset import DatabaseFactory
+from src.dataset import DataModule
 from src.lightningMods import LightningMod_DocEmbedder
 from src.utils.general import getargs, upload_checkpoint_to_gcs
+
+torch.set_float32_matmul_precision("medium")
 
 args = getargs()
 
@@ -35,7 +39,11 @@ L.seed_everything(args.seed)
 
 # Setup google Credentials gor GCS
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = args.gcs_credentials
-logger.info("🗝 Using GCS Credentials: {}".format(args.gcs_credentials))
+logger.info(
+    "🗝 Using GCS Credentials (for uploading model checkpoint): {}".format(
+        args.gcs_credentials
+    )
+)
 
 # Create wandb logger
 wandb_logger = None
@@ -45,6 +53,7 @@ if args.wandb:
 
 
 # 🤖 Create Model
+device = torch.device("cuda")
 tokenizer = AutoTokenizer.from_pretrained(
     args.encoder_base,
 )
@@ -62,49 +71,54 @@ psql_args = {
 
 
 ###################################
-# Prepare Data
+# Create Training Environment
 ###################################
-# Create Dataset
-logger.info("📂Creating Dataset")
-datasetFactory = DatabaseFactory(
-    dir_to_cache=PosixPath(args.data_path),
-    psql_args=psql_args,
-    tokenizer=tokenizer,
-    encoder_max_length=args.encoder_max_length,
+trainer = L.Trainer(
+    accelerator="gpu",
+    devices=1,
+    logger=wandb_logger,
+    accumulate_grad_batches=4,
+    log_every_n_steps=1,
+    max_epochs=args.epochs,
+    # val_check_interval=0.1,
+    enable_checkpointing=True,
 )
-train_dataset, val_dataset = datasetFactory.createDataset()
-
-logger.info("Passing the traiing to ⚡Pytorch-Lightning")
+logger.info("Passing the training to ⚡Pytorch-Lightning")
 # Load Pytorch Lightning Modules
 # Check if checkpoint exists
 if Path("checkpoints/model.ckpt").exists():
     logger.info("Loading checkpoint")
-    lightning_modules = LightningMod_DocEmbedder.load_from_checkpoint(
+    model = LightningMod_DocEmbedder.load_from_checkpoint(
         "checkpoints/model.ckpt",
         lang_head_name=args.encoder_base,
+        tokenizer=tokenizer,
         load_init_weights=True,
     )
 else:
-    lightning_modules = LightningMod_DocEmbedder(
-        args.encoder_base, load_init_weights=True
+    model = LightningMod_DocEmbedder(
+        args.encoder_base, load_init_weights=True, tokenizer=tokenizer
     )
 logger.info("🤖 Model Created")
-
-trainer = L.Trainer(
-    logger=wandb_logger,
-    accumulate_grad_batches=4,
-    max_epochs=args.epochs,
-    # val_check_interval=0.5,
-    enable_checkpointing=True,
+###################################
+# Prepare Data
+###################################
+# Create DataModule
+dataModule = DataModule(
+    args.batch_size,
+    psql_args,
+    args.data_path,
+    tokenizer,
+    args.encoder_max_length,
+    device=device,
 )
-# tuner = Tuner(trainer)
-# tuner.scale_batch_size(lightning_modules, mode="binsearch")
-trainer.fit(
-    lightning_modules,
-    data.DataLoader(train_dataset, batch_size=2, num_workers=12),
-    data.DataLoader(val_dataset, batch_size=2, num_workers=12),
-)
+# dataModule.prepare_data()
+tuner = Tuner(trainer)
+tuner.scale_batch_size(model, mode="binsearch", datamodule=dataModule)
+###################################
+# Train
+###################################
+trainer.fit(model, datamodule=dataModule)
 # Trainer save weigths
 trainer.save_checkpoint("checkpoints/model.ckpt")
 logger.info("⏫ Uploading Trained model to CGS")
-upload_checkpoint_to_gcs(lightning_modules, args.gcs_bucketname, args.gcs_blobname)
+upload_checkpoint_to_gcs(model, args.gcs_bucketname, args.gcs_blobname)

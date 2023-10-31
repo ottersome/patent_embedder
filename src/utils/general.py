@@ -61,25 +61,25 @@ def getargs():
     argparser.add_argument("--psql_port", required=True)
 
     # Table Specific
-    argparser.add_argument("--psql_relationships_tablename", default="samples")
-    argparser.add_argument("--psql_reltexts_tablename", default="sample_text")
+    argparser.add_argument("--psql_relationships_tablename", default="samples_large")
+    argparser.add_argument("--psql_reltexts_tablename", default="samples_large_text")
 
     return argparser.parse_args()
 
 
 def setup_logger(name, file="main.log", level=logging.INFO):
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    fh = logging.FileHandler(file)
+    fh = logging.FileHandler(file, mode="w")
     sh = logging.StreamHandler()
     fh.setFormatter(formatter)
     sh.setFormatter(formatter)
     fh.setLevel(level)
-    sh.setLevel(level)
+    sh.setLevel(logging.INFO)
 
     logger.addHandler(fh)
     logger.addHandler(sh)

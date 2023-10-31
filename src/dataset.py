@@ -1,11 +1,15 @@
 import logging
 import random
 from pathlib import Path, PosixPath
-from typing import Dict, List
+from typing import Dict, Generator, List, Tuple
 from urllib.parse import quote_plus
 
+import lightning as L
+import numpy as np
 import pandas as pd
 import psycopg2
+import torch
+import torch.utils.data as data
 from sqlalchemy import create_engine
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -26,6 +30,52 @@ so as to create an appropriate margin between the source document and its refere
 """
 
 
+class DataModule(L.LightningDataModule):
+    def __init__(
+        self,
+        batch_size,
+        psql_args,
+        data_path,
+        tokenizer,
+        encoder_max_length,
+        device,
+    ):
+        super().__init__()
+        self.logger = setup_logger(__name__, level=logging.INFO)
+        self.save_hyperparameters()
+        self.batch_size = batch_size
+
+        self.device = device
+        self.psql_args = psql_args
+        self.data_path = data_path
+        self.tokenizer = tokenizer
+        self.encoder_max_length = encoder_max_length
+
+    def prepare_data(self):
+        self.logger.info("📂Creating Dataset")
+        datasetFactory = DatabaseFactory(
+            dir_to_cache=PosixPath(self.data_path),
+            psql_args=self.psql_args,
+            tokenizer=self.tokenizer,
+            encoder_max_length=self.encoder_max_length,
+        )
+        self.train_dataset, self.val_dataset = datasetFactory.createDataset(self.device)
+
+    def train_dataloader(self):
+        return data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,  # type: ignore
+            num_workers=12,
+        )
+
+    def val_dataloader(self):
+        return data.DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,  # type: ignore
+            num_workers=12,
+        )
+
+
 class DocumentDataset(Dataset):
     def __init__(
         self,
@@ -34,8 +84,8 @@ class DocumentDataset(Dataset):
         """
         Args:
             data_path: Path to the dataset
-            psql_args: Dict[str, str] = See `DatabaseToDataset`
-            encoder_max_length: The maximum length of the encoder we will use for training/production
+            samples: List of rows. Each rows contains n lists. Each list being the tokens corresponding to title and abstract of each patent.
+            device: device to put the tensors on
         """
         self.logger = setup_logger("DocumentDataset", level=logging.DEBUG)
         self.dataset = samples
@@ -81,17 +131,33 @@ class DatabaseFactory:
         self.train_path = dir_to_cache / "dataset_train.parquet"
         self.val_path = dir_to_cache / "dataset_val.parquet"
 
-    def createDataset(self) -> List[DocumentDataset]:
+    def createDataset(
+        self, device: torch.device
+    ) -> Tuple[DocumentDataset, DocumentDataset]:
         if self.train_path.exists() and self.val_path.exists():
             # Load cache
+            # TODO: MAybe make this less clunky. Feels like im doing redundant calls
             self.logger.info("Found cache file. Will construct from them")
             self.train, self.val = self._construct_from_cache()
+            # Take List[List[array-like]] and transform it into List[List[Tensor]]
+            self.train = [
+                [torch.Tensor(np.array(doc)).to(torch.long) for doc in sample]
+                for sample in self.train
+            ]
+            self.val = [
+                [torch.Tensor(np.array(doc)).to(torch.long) for doc in sample]
+                for sample in self.val
+            ]
+
         else:
+            # TODO: check if I have to pass return here to Tensors just like I do when I
+            # construct from cache
             self.logger.info("Unable to find cache file. Will construct from scratch")
             self.train, self.val = self._construct_from_strach(self.psql_args)
-        return [DocumentDataset(self.train), DocumentDataset(self.val)]
 
-    def _construct_from_cache(self):
+        return (DocumentDataset(self.train), DocumentDataset(self.val))
+
+    def _construct_from_cache(self) -> Tuple[List, List]:
         # Read arrow files:
         train = pd.read_parquet(self.train_path).values.tolist()
         val = pd.read_parquet(self.val_path).values.tolist()
@@ -128,12 +194,13 @@ class DatabaseFactory:
             "Saving to cache fiels {} and {}".format(self.train_path, self.val_path)
         )
         # TODO: maybe be more flexible with how we write the columns rather than hardcoding them
-        train_df = pd.DataFrame(
-            train_ds, columns=["og_pubnum", "ref0", "ref1", "ref2", "nonref"]
+        columns = (
+            ["og_pubnum"]
+            + [f"ref{i}" for i in range(len(train_ds[0]) - 2)]
+            + ["nonref"]
         )
-        val_df = pd.DataFrame(
-            val_ds, columns=["og_pubnum", "ref0", "ref1", "ref2", "nonref"]
-        )
+        train_df = pd.DataFrame(train_ds, columns=columns)
+        val_df = pd.DataFrame(val_ds, columns=columns)
         train_df.to_parquet(self.train_path)
         val_df.to_parquet(self.val_path)
 
@@ -164,7 +231,9 @@ class DatabaseFactory:
 class DatabaseToDataset:
     def __init__(self, psql_args: Dict):
         # Establish psql connection to database
-        self.logger = setup_logger(__name__, level=logging.DEBUG)
+        self.logger = setup_logger(
+            __name__, "DatabaseToDataset.log", level=logging.INFO
+        )
         self.psql_args = psql_args
         try:
             self.engine = create_engine(
@@ -176,22 +245,29 @@ class DatabaseToDataset:
             self.logger.error("❌ Unable to connect to database:" + str(e))
             exit(-1)
 
+        self.avg_samples_extracted_from_row = 0  # 🪲
+        self.tot_samples_added = 0  # 🪲
+
     def _obtain_txt_data_for_row(self, row, table_name):
         # Query the text table for the text of the sample_id
         to_return = []
+        to_remove = []
         for sample_id in row:
             query = f"SELECT title,abstract FROM {table_name} WHERE publication_number = '{sample_id}'"
             res = pd.read_sql(query, self.conn)
             # res.dropna(axis=0, how="any", inplace=True)
-            title = res.iloc[0]["title"]
-            abstract = res.iloc[0]["abstract"]
-            if res.size == 0:
+            # Check
+            if res.empty:
                 # We have no text for this sample_id
-                self.logger.error(
+                self.logger.debug(
                     "No matching row in text data for publication number %s",
                     sample_id,
                 )
-                return None
+                to_remove.append(sample_id)
+                continue
+            title = res.iloc[0]["title"]
+            abstract = res.iloc[0]["abstract"]
+            self.logger.debug(f"Title {title} and abstract {abstract}")
             if (
                 title == None
                 or title == ""
@@ -200,16 +276,88 @@ class DatabaseToDataset:
                 or title == "NaN"
                 or abstract == "NaN"
             ):
-                return None
+                to_remove.append(sample_id)
+                continue
             # Ensure title + abstract is less than encoder_max_length
             to_return += ["<title>: " + title + "[SEP]<abstract>: " + abstract]
-        return to_return
+        return to_return, to_remove
+
+    def _obtain_txt_data_for_element(self, id, table_name):
+        query = (
+            f"SELECT title,abstract FROM {table_name} WHERE publication_number = '{id}'"
+        )
+        res = pd.read_sql(query, self.conn)
+        if res.empty:
+            return None
+        title = res.iloc[0]["title"]
+        abstract = res.iloc[0]["abstract"]
+        if title == None or title == "" or abstract == None or abstract == "":
+            return None
+        return "<title>: " + title + "[SEP]<abstract>:" + abstract
+
+    def _pull_one_sample_from_row(
+        self, row: pd.Series, samples_text_tablename: str
+    ) -> Generator[List[str], None, int]:
+        """
+        Will take a pandas series as row and get as many samples as possible from it
+        """
+        # Get column 0 before the others
+        col_0_text = self._obtain_txt_data_for_element(
+            row["og_pubnum"], samples_text_tablename
+        )
+        if col_0_text == None:
+            self.logger.warning("An og_pubnum was found without text")
+            return 0
+
+        ids_in_row_without_text = 0
+        pubs_added = 0
+
+        while True:
+            text_entry: List[str] = [col_0_text]
+            # HACK: remember that for now you are doing simple ref,pos,neg. If you want to dela with chain you have to change this code
+            # for col in row[1:]: # For all columns
+            for col in row.iloc[[1, -1]]:  # Only includes pos and neg references
+                obtained_text = False
+                while obtained_text == False:
+                    col_list: List[str] = col  # type: ignore
+                    # Check Stopping Criterion
+                    if len(col_list) == 0:
+                        # report statistics
+                        column_reports = str([len(c) for c in row[1:]])
+                        # HACK: remove once you dont need use for debugging
+                        self.logger.debug(
+                            f"Statistics Report for og_pubnum {row['og_pubnum']}:\n"
+                            f"\tElements taken on each column {pubs_added}\n"
+                            f"\tStill remaining {column_reports}.\n"
+                            f"\tPubs without text {ids_in_row_without_text}.\n"
+                        )
+                        return pubs_added
+                    id = col_list.pop()
+
+                    text_res = self._obtain_txt_data_for_element(
+                        id, samples_text_tablename
+                    )
+                    if text_res != None:
+                        text_entry.append(text_res)
+                        obtained_text = True
+                    else:
+                        ids_in_row_without_text += 1  # 🪲
+
+            pubs_added += 1  # 🪲
+            yield text_entry
 
     def pull_data(self, relationships_tablename, samples_text_tablename: str):
+        """
+        Main method that will pull data from the database and construct the dataset
+        Arguments:
+            relationships_tablename: The name of the table in the database that contains the network structure
+            samples_text_tablename: The name of the table in the database that contains the text data indexed by publication number
+        """
         query = f"""SELECT * FROM {relationships_tablename}
             WHERE array_length(ref0,1) < 12
             AND array_length(ref1,1) < 400
             AND array_length(ref2,1) < 1000
+            AND array_length(neg_exs,1) > 0
             ORDER BY og_pubnum ASC;
         """  # TODO: not a big fan of this way of filtering, well have to fix it later
         try:
@@ -217,49 +365,40 @@ class DatabaseToDataset:
         except Exception as e:
             self.logger.error("❌ Unable to query database:" + str(e))
             exit(-1)
+
         # Remove all None values from the dataframe
         relationships.dropna(axis=0, how="any", inplace=True)
-        # relationships.to_csv("relationships.csv", sep="|") # 🪲
+        # relationships.to_csv("relationships.csv", sep="|")  # 🪲
         samples = []
+        # Get columns
 
         # From there we will select just a few to build the dataset (atleast for now)
-        dropping_count = 0
-        for _, row_series in tqdm(relationships.iterrows(), desc="Going through rows"):
-            # Create a list of col_num elements
-            i = 0
-            stop = False
-            while (
-                i < 10 and stop == False
-            ):  # Have at maximum three samples for each row
-                try:
-                    # Check that all columns (which are list) are not empty
-                    bool_list = [len(column) != 0 for column in row_series.iloc[1:]]
-                    if not all(bool_list):
-                        stop = True
-                        continue
-                    # Create sample ids which will we loop through
-                    samples_ids = [row_series.iloc[0]] + [
-                        column.pop() for column in row_series.iloc[1:]
-                    ]
-                    # Pop will give us IndexError when it can pop no more
-                    # If we managed to construct the Ids (without exception) it means we can get text data, unless...
-                    sample = self._obtain_txt_data_for_row(
-                        samples_ids, samples_text_tablename
-                    )
-                    # ... unless we receive a `None` meaning that the text data is missing for one or more of the samples
-                    if sample == None:
-                        continue
-                    # If we reach here, we have a sample, we add to the list and increase i
-                    samples.append(sample)
-                    i += 1
+        row_i = 0
+        tqdm_obj = tqdm(total=len(relationships), desc="Iterating through rows.")
+        ####################
+        # Get Text
+        ####################
+        for _, row_series in relationships.iterrows():
+            try:
+                tqdm_obj.update(1)
+                for value in self._pull_one_sample_from_row(
+                    row_series, samples_text_tablename
+                ):  # When _pull_one_sample_from_row returns none it will stop
+                    samples.append(value)
+            except StopIteration as e:
+                row_i += 1
+                result = e.value
+                self.avg_samples_extracted_from_row = (
+                    (row_i - 1) / row_i
+                ) * self.avg_samples_extracted_from_row + (1 / row_i) * result
+                self.logger.debug(
+                    "Average samples extracted from row: %s",
+                    self.avg_samples_extracted_from_row,
+                )
 
-                # Catch Index Error:
-                except IndexError:
-                    dropping_count += 1
-                    self.logger.error("IndexError: %s", dropping_count)
-                    exit(-1)
+        # 🪲 Save this for debugging
+        values_df = pd.DataFrame(samples)
+        values_df.to_csv("values.csv", sep="|")
         # At this point we have all the samples indices we need
-        self.logger.info(
-            f"Formed the index dataset with total size {len(samples)}. Dropped {dropping_count} samples"
-        )
+        self.logger.info(f"Formed the index dataset with total size {len(samples)}.")
         return samples
