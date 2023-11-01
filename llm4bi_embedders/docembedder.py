@@ -3,10 +3,11 @@ import os
 
 import torch
 from google.cloud import storage
+from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizer
 
-from src.lightningMods import LightningMod_DocEmbedder
-from src.utils.general import setup_logger
+from .src.lightningMods import LightningMod_DocEmbedder
+from .src.utils.general import setup_logger
 
 
 class DocRep:
@@ -22,7 +23,7 @@ class DocEmbedder:
     FOUNDATION_MODEL = "allenai/scibert_scivocab_uncased"
     ENCODER_MAX_LENGTH = 512
 
-    def __init__(self, blob_name: str, tokenizer: PreTrainedTokenizer):
+    def __init__(self, blob_name: str):
         self.logger = setup_logger("DocEmbWrapper", "main.log", logging.INFO)
         home_path = os.path.expanduser("~")
         target_dir = os.path.join(home_path, self.TARGET_PATH)
@@ -50,10 +51,10 @@ class DocEmbedder:
         self.model = LightningMod_DocEmbedder.load_from_checkpoint(
             target_file,
             lang_head_name=self.FOUNDATION_MODEL,
-            tokenizer=tokenizer,
+            tokenizer=self.tokenizer,
             load_init_weights=False,
             strict=False,
-        )
+        ).to("cuda")
 
     def _dload_from_gcs(self, target_file: str) -> None:
         if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is None:
@@ -64,7 +65,10 @@ class DocEmbedder:
         storage_client = storage.Client()
         bucket = storage_client.bucket(self.BUCKET_NAME)
         blob = bucket.blob(self.blob_name)
-        blob.download_to_filename(target_file)
+        with open(target_file, "wb") as f:
+            with tqdm.wrapattr(f, "write", total=blob.size) as file_obj:
+                storage_client.download_blob_to_file(blob, file_obj)
+        # blob.download_to_filename(target_file)
 
     def __call__(self, doc: DocRep) -> torch.Tensor:
         return self.model(doc.data)

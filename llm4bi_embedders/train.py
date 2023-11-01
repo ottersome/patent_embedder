@@ -9,9 +9,9 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.tuner.tuning import Tuner
 from transformers import AutoTokenizer
 
-from src.dataset import DataModule
-from src.lightningMods import LightningMod_DocEmbedder
-from src.utils.general import getargs, upload_checkpoint_to_gcs
+from .src.dataset import DataModule
+from .src.lightningMods import LightningMod_DocEmbedder
+from .src.utils.general import getargs, upload_checkpoint_to_gcs
 
 torch.set_float32_matmul_precision("medium")
 

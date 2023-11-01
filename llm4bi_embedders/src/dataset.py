@@ -7,10 +7,8 @@ from urllib.parse import quote_plus
 import lightning as L
 import numpy as np
 import pandas as pd
-import psycopg2
 import torch
 import torch.utils.data as data
-from sqlalchemy import create_engine
 from torch import Tensor
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -122,7 +120,7 @@ class DatabaseFactory:
         encoder_max_length: int = 512,
     ):
         # Setup logger
-        self.logger = setup_logger(__name__, level=logging.DEBUG)
+        self.logger = setup_logger(__name__, level=logging.INFO)
         self.psql_args = psql_args
         self.encoder_max_length = encoder_max_length
         self.tokenizer = tokenizer
@@ -231,19 +229,18 @@ class DatabaseFactory:
 class DatabaseToDataset:
     def __init__(self, psql_args: Dict):
         # Establish psql connection to database
+        from sqlalchemy import create_engine
+
         self.logger = setup_logger(
             __name__, "DatabaseToDataset.log", level=logging.INFO
         )
         self.psql_args = psql_args
-        try:
-            self.engine = create_engine(
-                f"postgresql://{psql_args['user']}:{quote_plus(psql_args['password'])}@{psql_args['host']}:{psql_args['port']}/{psql_args['database']}"
-            )
-            self.conn = self.engine.connect()
+
+        self.engine = create_engine(
+            f"postgresql://{psql_args['user']}:{quote_plus(psql_args['password'])}@{psql_args['host']}:{psql_args['port']}/{psql_args['database']}"
+        )
+        self.conn = self.engine.connect()
         # Catch OperationalError:
-        except psycopg2.OperationalError as e:
-            self.logger.error("❌ Unable to connect to database:" + str(e))
-            exit(-1)
 
         self.avg_samples_extracted_from_row = 0  # 🪲
         self.tot_samples_added = 0  # 🪲

@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data
-import torchvision as tv
 from torch import Tensor
 from transformers import AutoConfig, AutoModel, PreTrainedTokenizer
 
@@ -25,7 +24,7 @@ class LightningMod_DocEmbedder(L.LightningModule):
         self.mylogger = setup_logger(
             "LightningMod_DocEmbedder",
             "LightningMod_DocEmbedder.log",
-            level=logging.DEBUG,
+            level=logging.INFO,
         )
         self.lang_head_config = AutoConfig.from_pretrained(
             lang_head_name, output_hidden_states=True
@@ -47,6 +46,7 @@ class LightningMod_DocEmbedder(L.LightningModule):
             self.mylogger.info("🛠️ Configuring Model Architecture")
             self.lang_head = AutoModel.from_config(self.lang_head_config)
 
+        # TODO: remove this from loss. Its was only for bug huntin 🐛
         self.loss = MarginilizedLoss(tokenizer)
 
     def forward(self, x, attention_mask):

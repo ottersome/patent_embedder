@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 
 import lightning as L
 from google.cloud import storage
@@ -68,13 +69,16 @@ def getargs():
 
 
 def setup_logger(name, file="main.log", level=logging.INFO):
+    os.makedirs("~/.llm4bi/logs", exist_ok=True)
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    fh = logging.FileHandler(file, mode="w")
+    expand_user = os.path.join(os.path.expanduser("~"), ".llm4bi/logs/")
+    os.makedirs(expand_user, exist_ok=True)
+    fh = logging.FileHandler(os.path.join(expand_user, file), "w")
     sh = logging.StreamHandler()
     fh.setFormatter(formatter)
     sh.setFormatter(formatter)

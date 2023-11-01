@@ -17,7 +17,7 @@ class MarginilizedLoss(nn.Module):
         super(MarginilizedLoss, self).__init__()
         self.tokenizer = tokenizer  # 🪲
         self.logger = setup_logger(
-            "MarginilizedLoss", "MarginilizedLoss.log", level=logging.DEBUG
+            "MarginilizedLoss", "MarginilizedLoss.log", level=logging.INFO
         )
 
     def forward(self, x: List[Tensor]):

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name="llm4bi_embedder"
+version="0.2.2"
+authors=[
+  {name="Luis Garcia", email="admin@huginns.io"},
+]
+description="Package including any embedder for the LLM4BI project"
+requires-python = ">=3.9"
+dependencies = [
+    "lightning",
+    "transformers",
+    "pandas",
+    "wandb",
+    "pyarrow",
+    "fastparquet",
+    "google-cloud-storage",
+    #"google-cloud-storage",
+    #"psycopg2-binary",
+    #"sqlalchemy",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
+
+[project.url]
+"HomePage" = "git@github.com:ottersome/patent_embedder.git"
+

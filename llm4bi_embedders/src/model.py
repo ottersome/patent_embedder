@@ -17,7 +17,7 @@ class DocumentEmbeddor(nn.Module):
         super(DocumentEmbeddor, self).__init__()
 
         self.mylogger = setup_logger(
-            "DocumentEmbeddor", "DocumentEmbeddor.log", level=logging.DEBUG
+            "DocumentEmbeddor", "DocumentEmbeddor.log", level=logging.INFO
         )
 
         self.language_head = lh_model
