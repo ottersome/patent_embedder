@@ -1,6 +1,6 @@
 import os
 
-from docembedder import DocEmbedder, DocRep
+from llm4bi_embedders.docembedder import DocEmbedder, DocRep
 
 # Key location
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcs_service_key.json"
@@ -12,9 +12,7 @@ og_file_abstract = "A USB connection-detection circuitry and the operation metho
 related_file_title = "Microcontroller input/output nodes with both programmable pull-up and pull-down resistive loads and programmable drive strength "
 related_file_abstract = "The present invention relates to an input/output node in an electronic device which comprises an input/output pin, a plurality of programmable pull-up resistors and a plurality of programmable pull-down resistors. Each of the pull-up and pull-down resistors, or a combination of them, can be activated by turning on or off n-MOS and p-MOS transistors with logic c"
 
-non_related_file_title = (
-    "Method and apparatus for controlling a power supply voltage to a processor"
-)
+non_related_file_title = "Reusable pesticide bait station"
 non_related_file_abstract = "A compact reusable bait station that can be used for either solid or liquid bait. The bait station has an outer wall that defines an inner bait chamber. The chamber, when sealed, prevents liquid bait inside the chamber from flowing out. The chamber has limited access from the outside to reduce evaporation, drying, and contamination of the liquid bait by preventing unnecessary exposure to the environment. Access to the outside is limited to access ports th"
 
 # Create DocRep objects
@@ -23,13 +21,22 @@ related_doc = DocRep(related_file_title, related_file_abstract)
 non_related_doc = DocRep(non_related_file_title, non_related_file_abstract)
 
 # Create DocEmbedder object
-doc_emb = DocEmbedder("checkpoints/doc_embedder.ckpt")
+doc_embedder = DocEmbedder("checkpoints/doc_embedder.ckpt")
 
-# Get distances between documents
-print("Distance between original and related:", doc_emb.doc_dist(og_doc, related_doc))
+## Get Embedding
+# Just get the embedding itself
+og_embedding = doc_embedder(og_doc)
 print(
-    "Distance between original and non-related:",
-    doc_emb.doc_dist(og_doc, non_related_doc),
+    f"the shape of original doc embedding is {og_embedding.shape} the vector itself looks like \n{og_embedding}"
 )
 
-# Thats pretty much it
+## Get the distance between documents
+
+# Get distances between documents
+print(
+    "Distance between original and related:", doc_embedder.doc_dist(og_doc, related_doc)
+)
+print(
+    "Distance between original and non-related:",
+    doc_embedder.doc_dist(og_doc, non_related_doc),
+)
