@@ -55,6 +55,7 @@ class DocEmbedder:
             load_init_weights=False,
             strict=False,
         ).to("cuda")
+        self.model.eval()
 
     def _dload_from_gcs(self, target_file: str) -> None:
         if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is None:
@@ -71,7 +72,29 @@ class DocEmbedder:
         # blob.download_to_filename(target_file)
 
     def __call__(self, doc: DocRep) -> torch.Tensor:
-        return self.model(doc.data)
+        # Create attetion mask and tokens
+        tokns = (
+            torch.Tensor(
+                self.tokenizer.encode(
+                    doc.data,
+                    max_length=self.ENCODER_MAX_LENGTH,
+                    truncation=True,
+                    padding="max_length",
+                )
+            )
+            .to(torch.long)
+            .view(1, -1)
+            .to("cuda")
+        )
+        attention_mask = torch.ones_like(tokns)
+        attention_mask[tokns == 0] = 0
+        embed = (
+            self.model(tokns, attention_mask=attention_mask)
+            .hidden_states[-1][:, 0, :]
+            .detach()
+            .squeeze()
+        )
+        return embed
 
     def doc_dist(self, doc1: DocRep, doc2: DocRep) -> torch.Tensor:
         self.model.eval()
